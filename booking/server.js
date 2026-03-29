@@ -18,7 +18,7 @@ app.use(express.static(path.join(__dirname, "public")));
 
 const adapter = new FileSync("db.json");
 const db = low(adapter);
-db.defaults({ bookings: [], feedback: [] }).write();
+db.defaults({ bookings: [], feedback: [], walkins: [] }).write();
 
 const {
   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER,
@@ -47,7 +47,7 @@ function formatTime(t) {
 }
 
 async function sendSMS(to, body) {
-  if (!twilioClient) { console.log(`[SMS SKIPPED] ${body.slice(0, 60)}...`); return; }
+  if (!twilioClient) { console.log(`[SMS SKIPPED] ${body.slice(0, 80)}`); return; }
   await twilioClient.messages.create({ body, from: TWILIO_PHONE_NUMBER, to });
 }
 
@@ -76,16 +76,16 @@ async function sendCustomerOffer(booking, suggestedDate, suggestedTime) {
   );
 }
 
-async function sendReviewSMS(booking) {
-  await sendSMS(booking.phone,
-    `Hi ${booking.customerName}! How was your experience at ${BUSINESS_NAME}? Takes 20 seconds: ${getSurveyUrl(booking.reviewToken)}`
+async function sendReviewSMS(phone, customerName, token) {
+  await sendSMS(phone,
+    `Hi ${customerName}! How was your experience at ${BUSINESS_NAME}? Takes 20 seconds: ${getSurveyUrl(token)}`
   );
 }
 
 // ── API ───────────────────────────────────────────────────────
 
 app.get("/api/info", (req, res) => {
-  res.json({ businessName: BUSINESS_NAME });
+  res.json({ businessName: BUSINESS_NAME, googleReviewLink: GOOGLE_REVIEW });
 });
 
 app.get("/api/services", (req, res) => res.json(SERVICES));
@@ -95,7 +95,7 @@ app.get("/api/availability", (req, res) => {
   if (!date) return res.status(400).json({ error: "date required" });
 
   const d = new Date(date);
-  const day = d.getDay(); // 0=Sun 6=Sat
+  const day = d.getDay();
   const closed = (HOURS.closedDays || []).includes(day);
   if (closed) return res.json({ date, slots: [] });
 
@@ -104,17 +104,14 @@ app.get("/api/availability", (req, res) => {
   else if (day === 0 || day === 6) h = HOURS.weekend || HOURS.default;
   else h = HOURS.default;
 
-  const startH = h.startHour;
-  const endH = h.endHour;
-
+  const startH = h.startHour, endH = h.endHour;
   const now = new Date();
   const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
   const todayStr = now.toISOString().split("T")[0];
 
   const booked = db.get("bookings")
     .filter(b => b.date === date && b.status !== "cancelled" && b.status !== "denied")
-    .map(b => b.time)
-    .value();
+    .map(b => b.time).value();
 
   const slots = [];
   for (let hr = startH; hr <= endH; hr++) {
@@ -128,7 +125,6 @@ app.get("/api/availability", (req, res) => {
       slots.push({ time: timeStr, status: booked.includes(timeStr) ? "booked" : "available" });
     }
   }
-
   res.json({ date, slots });
 });
 
@@ -147,23 +143,21 @@ app.post("/api/bookings", async (req, res) => {
   if (taken) return res.status(409).json({ error: "Slot already booked" });
 
   const booking = {
-    id: `BK-${Date.now()}`,
-    shortId: generateShortId(),
+    id: `BK-${Date.now()}`, shortId: generateShortId(),
     serviceId, serviceName: serviceName || serviceId,
     servicePrice: Number(servicePrice) || 0,
     date, time, customerName, phone,
     email: email || null, notes: notes || null,
     status: "pending",
-    reviewToken: generateToken(),
-    reviewSentAt: null,
+    reviewToken: generateToken(), reviewSentAt: null,
     createdAt: new Date().toISOString(),
   };
 
   db.get("bookings").push(booking).write();
-  console.log(`✓ Booking request: ${booking.id} — ${customerName} for ${booking.serviceName} on ${date} at ${time}`);
+  console.log(`✓ Booking: ${booking.id} — ${customerName} for ${booking.serviceName} on ${date} at ${time}`);
 
-  try { await sendOwnerRequest(booking); console.log(`✓ Owner SMS sent`); }
-  catch (err) { console.error(`✗ Owner SMS failed:`, err.message); }
+  try { await sendOwnerRequest(booking); }
+  catch (err) { console.error(`✗ Owner SMS:`, err.message); }
 
   res.json({
     success: true, bookingId: booking.id,
@@ -171,7 +165,38 @@ app.post("/api/bookings", async (req, res) => {
   });
 });
 
-// Twilio webhook — owner and customer replies
+// ── Walk-in customers (manual review follow-up) ──────────────
+
+// Add a walk-in customer — they get a review SMS after REVIEW_DELAY_MIN
+app.post("/api/walkins", async (req, res) => {
+  const { customerName, serviceName } = req.body;
+  let phone = (req.body.phone || "").toString().replace(/[^0-9+]/g, "");
+  if (phone.length === 10) phone = "+1" + phone;
+  else if (phone.length === 11 && phone[0] === "1") phone = "+" + phone;
+  else if (phone.length > 0 && !phone.startsWith("+")) phone = "+" + phone;
+  if (!customerName || !phone) return res.status(400).json({ error: "Name and phone required" });
+
+  const walkin = {
+    id: `WK-${Date.now()}`,
+    customerName, phone,
+    serviceName: serviceName || "Service",
+    reviewToken: generateToken(),
+    reviewSentAt: null,
+    createdAt: new Date().toISOString(),
+  };
+
+  db.get("walkins").push(walkin).write();
+  console.log(`✓ Walk-in added: ${customerName} (${phone})`);
+  res.json({ success: true, id: walkin.id });
+});
+
+app.get("/api/walkins", (req, res) => {
+  if (req.query.password !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized" });
+  res.json(db.get("walkins").value().reverse());
+});
+
+// ── SMS webhook ───────────────────────────────────────────────
+
 app.post("/api/sms-webhook", async (req, res) => {
   const from = req.body.From;
   const bodyRaw = (req.body.Body || "").trim();
@@ -188,7 +213,7 @@ app.post("/api/sms-webhook", async (req, res) => {
 
     if (body === "YES" && pendingBooking) {
       db.get("bookings").find({ id: pendingBooking.id }).assign({ status: "confirmed" }).write();
-      try { await sendCustomerConfirmation(pendingBooking); console.log(`✓ Confirmed → ${pendingBooking.customerName}`); }
+      try { await sendCustomerConfirmation(pendingBooking); }
       catch (err) { console.error(err.message); }
 
     } else if (body === "NO" && pendingBooking) {
@@ -214,7 +239,6 @@ app.post("/api/sms-webhook", async (req, res) => {
     }
 
   } else {
-    // Customer reply to an offer
     const fromN = (from || "").replace(/[^0-9]/g, "");
     const allOffers = db.get("bookings").filter(b => b.status === "offer_sent").value();
     const offerBooking = allOffers.find(b => (b.phone || "").replace(/[^0-9]/g, "").endsWith(fromN.slice(-10)));
@@ -227,34 +251,26 @@ app.post("/api/sms-webhook", async (req, res) => {
           .value();
         if (taken) {
           db.get("bookings").find({ id: offerBooking.id }).assign({ status: "denied" }).write();
-          try {
-            await sendSMS(offerBooking.phone,
-              `Sorry ${offerBooking.customerName}, that time just got taken. Please rebook: ${BOOKING_PAGE_URL}/book`
-            );
-          } catch (err) { console.error(err.message); }
+          try { await sendSMS(offerBooking.phone, `Sorry ${offerBooking.customerName}, that time just got taken. Please rebook: ${BOOKING_PAGE_URL}/book`); }
+          catch (err) { console.error(err.message); }
         } else {
-          db.get("bookings").find({ id: offerBooking.id }).assign({
-            status: "confirmed",
-            date: offerBooking.suggestedDate,
-            time: offerBooking.suggestedTime,
-          }).write();
+          db.get("bookings").find({ id: offerBooking.id }).assign({ status: "confirmed", date: offerBooking.suggestedDate, time: offerBooking.suggestedTime }).write();
           const updated = db.get("bookings").find({ id: offerBooking.id }).value();
           try { await sendCustomerConfirmation(updated); }
           catch (err) { console.error(err.message); }
         }
       } else if (body === "NO") {
         db.get("bookings").find({ id: offerBooking.id }).assign({ status: "denied" }).write();
-        try {
-          await sendSMS(offerBooking.phone,
-            `No problem ${offerBooking.customerName}! Give us a call at ${BUSINESS_NAME} and we'll find a time that works.`
-          );
-        } catch (err) { console.error(err.message); }
+        try { await sendSMS(offerBooking.phone, `No problem ${offerBooking.customerName}! Give us a call and we'll find a time that works.`); }
+        catch (err) { console.error(err.message); }
       }
     }
   }
 
   res.set("Content-Type", "text/xml").send("<Response></Response>");
 });
+
+// ── Review endpoints ──────────────────────────────────────────
 
 app.get("/api/bookings", (req, res) => {
   if (req.query.password !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized" });
@@ -264,28 +280,40 @@ app.get("/api/bookings", (req, res) => {
 app.post("/api/review", (req, res) => {
   const { token, rating, comment } = req.body;
   if (!token || !rating) return res.status(400).json({ error: "token and rating required" });
+
+  // Check bookings first, then walkins
   const booking = db.get("bookings").find({ reviewToken: token }).value();
-  if (!booking) return res.status(404).json({ error: "Invalid token" });
+  const walkin  = !booking ? db.get("walkins").find({ reviewToken: token }).value() : null;
+  const record  = booking || walkin;
+  if (!record) return res.status(404).json({ error: "Invalid token" });
+
   db.get("feedback").push({
-    id: Date.now(), bookingId: booking.id,
-    customerName: booking.customerName, serviceName: booking.serviceName,
+    id: Date.now(),
+    source: booking ? "booking" : "walkin",
+    sourceId: record.id,
+    customerName: record.customerName,
+    serviceName: record.serviceName,
     rating: Number(rating), comment: comment || null,
     submittedAt: new Date().toISOString(),
   }).write();
+
   res.json({ success: true, redirectToGoogle: Number(rating) >= 4 });
 });
 
 app.get("/api/review/:token", (req, res) => {
   const booking = db.get("bookings").find({ reviewToken: req.params.token }).value();
-  if (!booking) return res.status(404).json({ error: "Not found" });
-  const alreadyReviewed = db.get("feedback").find({ bookingId: booking.id }).value();
-  res.json({ customerName: booking.customerName, serviceName: booking.serviceName, date: booking.date, alreadyReviewed: !!alreadyReviewed });
+  const walkin  = !booking ? db.get("walkins").find({ reviewToken: req.params.token }).value() : null;
+  const record  = booking || walkin;
+  if (!record) return res.status(404).json({ error: "Not found" });
+  const alreadyReviewed = db.get("feedback").find({ sourceId: record.id }).value();
+  res.json({ customerName: record.customerName, serviceName: record.serviceName, alreadyReviewed: !!alreadyReviewed });
 });
 
 app.get("/api/analytics", (req, res) => {
   if (req.query.password !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized" });
   const bookings = db.get("bookings").value();
   const feedback = db.get("feedback").value();
+  const walkins  = db.get("walkins").value();
   const confirmed = bookings.filter(b => b.status === "confirmed");
   const revenue = confirmed.reduce((sum, b) => sum + b.servicePrice, 0);
   const byService = {};
@@ -301,35 +329,53 @@ app.get("/api/analytics", (req, res) => {
   const totalFeedback = feedback.length;
   const avgRating = totalFeedback ? (feedback.reduce((s, f) => s + f.rating, 0) / totalFeedback).toFixed(1) : null;
   const reviewRate = confirmed.length ? Math.round((totalFeedback / confirmed.length) * 100) : 0;
-  res.json({ totalBookings: confirmed.length, totalRevenue: revenue, avgRating, reviewRate, byService, revenueByDay: last14, byHour });
+  res.json({ totalBookings: confirmed.length, totalRevenue: revenue, avgRating, reviewRate, byService, revenueByDay: last14, byHour, totalWalkins: walkins.length });
 });
+
+// ── Static pages ──────────────────────────────────────────────
 
 app.get("/dashboard", (req, res) => res.sendFile(path.join(__dirname, "public", "dashboard.html")));
 app.get("/review",    (req, res) => res.sendFile(path.join(__dirname, "public", "review.html")));
 app.get("*",          (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
-// Review SMS cron — fires every minute, checks if it's time to send
+// ── Cron: review SMS for bookings + walkins ───────────────────
+
 cron.schedule("* * * * *", async () => {
   const now = new Date();
-  const pending = db.get("bookings").filter(b => {
+
+  // Confirmed bookings
+  const pendingBookings = db.get("bookings").filter(b => {
     if (b.status !== "confirmed" || b.reviewSentAt) return false;
-    const appointmentTime = new Date(`${b.date}T${b.time}:00-06:00`);
-    const minutesAfter = (now - appointmentTime) / (1000 * 60);
-    return minutesAfter >= REVIEW_DELAY_MIN;
+    const apptTime = new Date(`${b.date}T${b.time}:00-06:00`);
+    return (now - apptTime) / (1000 * 60) >= REVIEW_DELAY_MIN;
   }).value();
-  for (const booking of pending) {
+
+  for (const b of pendingBookings) {
     try {
-      await sendReviewSMS(booking);
-      db.get("bookings").find({ id: booking.id }).assign({ reviewSentAt: now.toISOString() }).write();
-      console.log(`✓ Review SMS → ${booking.customerName}`);
-    } catch (err) {
-      console.error(`✗ Review SMS failed:`, err.message);
-    }
+      await sendReviewSMS(b.phone, b.customerName, b.reviewToken);
+      db.get("bookings").find({ id: b.id }).assign({ reviewSentAt: now.toISOString() }).write();
+      console.log(`✓ Review SMS → ${b.customerName} (booking)`);
+    } catch (err) { console.error(`✗ Review SMS failed:`, err.message); }
+  }
+
+  // Walk-ins
+  const pendingWalkins = db.get("walkins").filter(w => {
+    if (w.reviewSentAt) return false;
+    const createdTime = new Date(w.createdAt);
+    return (now - createdTime) / (1000 * 60) >= REVIEW_DELAY_MIN;
+  }).value();
+
+  for (const w of pendingWalkins) {
+    try {
+      await sendReviewSMS(w.phone, w.customerName, w.reviewToken);
+      db.get("walkins").find({ id: w.id }).assign({ reviewSentAt: now.toISOString() }).write();
+      console.log(`✓ Review SMS → ${w.customerName} (walk-in)`);
+    } catch (err) { console.error(`✗ Review SMS failed:`, err.message); }
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`\n✓  ${BUSINESS_NAME} — Booking System`);
-  console.log(`   Booking: http://localhost:${PORT}`);
+  console.log(`\n✓  ${BUSINESS_NAME} — Booking + Review System`);
+  console.log(`   Booking:   http://localhost:${PORT}`);
   console.log(`   Dashboard: http://localhost:${PORT}/dashboard\n`);
 });
