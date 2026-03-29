@@ -109,5 +109,5 @@ window.CLIENT = {
   googleMapsLink: "",
 
   // --- Booking URL (Railway backend) ---
-  bookingUrl: "https://YOUR-APP.up.railway.app/book",
+  bookingUrl: "https://skidoc-booking.onrender.com/book",
 };
