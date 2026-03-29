@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title id="page-title">Services</title>
+  <link rel="stylesheet" href="styles.css"/>
+  <script src="config.js"></script>
+</head>
+<body>
+
+<nav class="navbar" id="navbar"></nav>
+
+<section class="page-header">
+  <div class="page-header-inner">
+    <div class="page-eyebrow" id="svc-eyebrow"></div>
+    <h1 id="svc-title"></h1>
+    <p id="svc-sub"></p>
+  </div>
+</section>
+
+<!-- All services -->
+<section class="section">
+  <div class="wrap">
+    <div class="section-label"><span>What We Offer</span></div>
+    <h2 class="section-title">Every service we provide.</h2>
+    <div class="services-grid" id="services-grid"></div>
+  </div>
+</section>
+
+<!-- Pricing -->
+<section class="section section-alt">
+  <div class="wrap">
+    <div class="section-label"><span id="price-eyebrow"></span></div>
+    <h2 class="section-title" id="price-title"></h2>
+    <p class="section-sub" id="price-sub"></p>
+    <div class="pricing-grid" id="pricing-grid"></div>
+    <p id="pricing-note" style="margin-top:20px;font-size:14px;color:var(--text2);display:none"></p>
+  </div>
+</section>
+
+<!-- CTA band -->
+<section class="cta-band">
+  <div class="wrap-narrow">
+    <h2>Ready to get started?</h2>
+    <p>Book your appointment online in under a minute.</p>
+    <a class="btn btn-outline" id="cta-book" href="#">Book Now →</a>
+  </div>
+</section>
+
+<footer class="footer" id="footer"></footer>
+
+<script src="components.js"></script>
+<script>
+  const C = window.CLIENT;
+  document.documentElement.style.setProperty('--primary', C.primaryColor || '#2563eb');
+  document.documentElement.style.setProperty('--primary-dark', C.primaryDark || '#1d4ed8');
+  document.getElementById('page-title').textContent = C.name + ' — Services';
+
+  renderNav('services.html');
+  renderFooter();
+
+  document.getElementById('svc-eyebrow').textContent = C.servicesEyebrow || 'Services';
+  document.getElementById('svc-title').textContent = C.servicesTitle || '';
+  document.getElementById('svc-sub').textContent = C.servicesSub || '';
+  document.getElementById('cta-book').href = C.bookingUrl || '#';
+
+  const svcGrid = document.getElementById('services-grid');
+  (C.services || []).forEach(function(s) {
+    svcGrid.innerHTML += '<div class="service-card"><div class="service-icon">' + (s.icon || '✦') + '</div><h3>' + s.name + '</h3><p>' + s.description + '</p></div>';
+  });
+
+  document.getElementById('price-eyebrow').textContent = C.pricingEyebrow || 'Pricing';
+  document.getElementById('price-title').textContent = C.pricingTitle || '';
+  document.getElementById('price-sub').textContent = C.pricingSub || '';
+  const priceGrid = document.getElementById('pricing-grid');
+  (C.pricing || []).forEach(function(cat) {
+    const items = (cat.items || []).map(function(i) {
+      return '<li><span>' + i.name + '</span><strong>' + i.price + '</strong></li>';
+    }).join('');
+    priceGrid.innerHTML += '<div class="price-card"><h3>' + cat.category + '</h3><ul>' + items + '</ul></div>';
+  });
+  if (C.pricingNote) {
+    const n = document.getElementById('pricing-note');
+    n.textContent = C.pricingNote; n.style.display = 'block';
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title id="page-title">Reviews</title>
+  <link rel="stylesheet" href="styles.css"/>
+  <script src="config.js"></script>
+</head>
+<body>
+
+<nav class="navbar" id="navbar"></nav>
+
+<section class="page-header">
+  <div class="page-header-inner">
+    <div class="page-eyebrow" id="rev-eyebrow"></div>
+    <h1 id="rev-title"></h1>
+    <p id="rev-sub"></p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+
+    <!-- Summary bar -->
+    <div class="review-summary">
+      <div>
+        <div class="review-big-num" id="avg-rating"></div>
+        <div class="review-stars-lg">★★★★★</div>
+        <div class="review-big-sub" id="total-reviews"></div>
+      </div>
+      <div style="flex:1;padding-left:16px">
+        <div style="font-size:1rem;font-weight:700;color:#fff;margin-bottom:6px">Consistently 5-star rated.</div>
+        <div style="font-size:14px;color:rgba(255,255,255,0.4);line-height:1.6">Our review automation follows up with every customer 24 hours after their appointment — making it easy for happy customers to share their experience.</div>
+      </div>
+      <div class="review-summary-cta">
+        <a class="btn btn-primary" id="google-review-btn" href="#" target="_blank" rel="noopener">Leave a Review →</a>
+      </div>
+    </div>
+
+    <!-- Review cards -->
+    <div class="reviews-grid" id="reviews-grid"></div>
+
+  </div>
+</section>
+
+<!-- CTA band -->
+<section class="cta-band">
+  <div class="wrap-narrow">
+    <h2>Join hundreds of happy customers.</h2>
+    <p>Book your appointment online. Takes 60 seconds.</p>
+    <a class="btn btn-outline" id="cta-book" href="#">Book Now →</a>
+  </div>
+</section>
+
+<footer class="footer" id="footer"></footer>
+
+<script src="components.js"></script>
+<script>
+  const C = window.CLIENT;
+  document.documentElement.style.setProperty('--primary', C.primaryColor || '#2563eb');
+  document.documentElement.style.setProperty('--primary-dark', C.primaryDark || '#1d4ed8');
+  document.getElementById('page-title').textContent = C.name + ' — Reviews';
+
+  renderNav('reviews.html');
+  renderFooter();
+
+  document.getElementById('rev-eyebrow').textContent = C.reviewsEyebrow || 'Reviews';
+  document.getElementById('rev-title').textContent = C.reviewsTitle || '';
+  document.getElementById('rev-sub').textContent = C.reviewsSub || '';
+  document.getElementById('avg-rating').textContent = C.avgRating || '5.0';
+  document.getElementById('total-reviews').textContent = (C.totalReviews || '100+') + ' Google reviews';
+  document.getElementById('google-review-btn').href = C.googleReviewLink || '#';
+  document.getElementById('cta-book').href = C.bookingUrl || '#';
+
+  const grid = document.getElementById('reviews-grid');
+  (C.reviews || []).forEach(function(r) {
+    const stars = '★'.repeat(r.rating || 5);
+    grid.innerHTML += '<div class="review-card"><div class="review-stars">' + stars + '</div><p class="review-text">"' + r.text + '"</p><div class="review-author">— ' + r.name + '</div></div>';
+  });
+</script>
+</body>
+</html>
